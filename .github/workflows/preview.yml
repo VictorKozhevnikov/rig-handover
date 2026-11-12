@@ -1,0 +1,40 @@
+# Plan morning-digest § 3/§ 4 (ADR 0003). Builds the preview from a command and deploys it to
+# GitHub Pages. Nothing is committed: the page only lives on the Pages link, so uploading over it
+# (run again with the LANE_MARKER secret removed) really takes the marker off.
+name: preview
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Night to preview
+        default: '2026-10-28'
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency: { group: pages, cancel-in-progress: false }
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.deploy.outputs.page_url }}' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install -g pnpm@12.18.0 && pnpm install
+      - name: Save /digest/<night> as one HTML file
+        env:
+          LANE_MARKER: ${{ secrets.LANE_MARKER }}
+          NIGHT: ${{ inputs.night }}
+          PORT: 8787
+        run: |
+          pnpm start & 
+          for i in $(seq 30); do curl -sf localhost:8787/health >/dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -sf "localhost:8787/digest/$NIGHT" -o _site/index.html
+          cp _site/index.html "_site/digest-$NIGHT.html"
+          grep -o '<span class="marker">[^<]*' _site/index.html | sed 's/.*>//; s/.\{4\}$/****/'
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: _site, retention-days: 1 }
+      - id: deploy
+        uses: actions/deploy-pages@v4
